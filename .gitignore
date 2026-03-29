@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+vendor/
+*.dmg
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+.DS_Store
