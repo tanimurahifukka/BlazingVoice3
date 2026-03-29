@@ -3,18 +3,72 @@ import Foundation
 import Speech
 
 /// CLI test mode: runs the full pipeline without GUI
-/// Usage: BlazingVoice3 --test [audio-file-path]
+/// Usage:
+///   BlazingVoice3 --test [audio-file-path]
+///   BlazingVoice3 --startup-smoke
+///   BlazingVoice3 --ui-smoke
 enum CLITest {
-    static func shouldRun() -> Bool {
-        CommandLine.arguments.contains("--test")
+    enum Mode: Equatable {
+        case fullPipeline(audioPath: String?)
+        case startupSmoke
+        case uiSmoke
+    }
+
+    static func mode(arguments: [String] = CommandLine.arguments) -> Mode? {
+        if arguments.contains("--ui-smoke") {
+            return .uiSmoke
+        }
+
+        if arguments.contains("--startup-smoke") {
+            return .startupSmoke
+        }
+
+        guard let testIdx = arguments.firstIndex(of: "--test") else {
+            return nil
+        }
+        let audioPath = (testIdx + 1 < arguments.count) ? arguments[testIdx + 1] : nil
+        return .fullPipeline(audioPath: audioPath)
+    }
+
+    static func shouldRun(arguments: [String] = CommandLine.arguments) -> Bool {
+        mode(arguments: arguments) != nil
     }
 
     @MainActor
-    static func run() async {
-        let args = CommandLine.arguments
-        let testIdx = args.firstIndex(of: "--test")!
-        let audioPath = (testIdx + 1 < args.count) ? args[testIdx + 1] : nil
+    static func run(arguments: [String] = CommandLine.arguments) async {
+        guard let mode = mode(arguments: arguments) else { return }
+        switch mode {
+        case .startupSmoke:
+            runStartupSmoke()
+        case .uiSmoke:
+            await UISmokeHarness.run()
+        case .fullPipeline(let audioPath):
+            await runFullPipeline(audioPath: audioPath)
+        }
+    }
 
+    @MainActor
+    private static func runStartupSmoke() {
+        print("=== Startup Smoke ===")
+        let settings = AppSettings()
+        let permissions = PermissionHelper()
+        permissions.refresh()
+
+        let hotkeyManager = HotkeyManager()
+        hotkeyManager.configure(with: settings)
+        hotkeyManager.stopMonitoring()
+
+        print("  Version: \(AppVersion.short)")
+        print("  Default mode: \(settings.defaultVoiceMode.rawValue)")
+        print("  Permissions refresh OK")
+        print("  Hotkey manager configure OK")
+        print("=== Startup Smoke PASSED ===")
+        fflush(stdout)
+        _exit(0)
+    }
+
+    @MainActor
+    private static func runFullPipeline(audioPath: String?) async {
         print("=== BlazingVoice3 CLI Test ===")
 
         // 1. Load engine

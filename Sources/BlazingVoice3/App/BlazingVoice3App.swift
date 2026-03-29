@@ -5,7 +5,7 @@ struct BlazingVoice3App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
-        // CLI test mode: bypass GUI
+        // CLI/self-test modes: bypass GUI
         if CLITest.shouldRun() {
             Task { @MainActor in
                 await CLITest.run()

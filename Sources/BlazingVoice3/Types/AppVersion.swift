@@ -3,7 +3,7 @@ import Foundation
 enum AppVersion {
     static let major = 4
     static let minor = 0
-    static let patch = 5
+    static let patch = 7
 
     /// ビルド日時 (自動生成)
     static let buildDate: String = {
@@ -12,17 +12,17 @@ enum AppVersion {
         return f.string(from: Date())
     }()
 
-    /// 短いバージョン: "4.0.5"
+    /// 短いバージョン: "4.0.7"
     static var short: String {
         "\(major).\(minor).\(patch)"
     }
 
-    /// フルバージョン: "4.0.5 (20260328.2230)"
+    /// フルバージョン: "4.0.7 (20260328.2230)"
     static var full: String {
         "\(short) (\(buildDate))"
     }
 
-    /// バンドル用: "4.0.5.20260328"
+    /// バンドル用: "4.0.7.20260328"
     static var bundle: String {
         let f = DateFormatter()
         f.dateFormat = "yyyyMMdd"

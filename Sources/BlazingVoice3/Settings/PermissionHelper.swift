@@ -7,6 +7,7 @@ final class PermissionHelper: ObservableObject {
     @Published var micGranted = false
     @Published var speechGranted = false
     @Published var accessibilityGranted = false
+    var onAccessibilityGranted: (() -> Void)?
 
     private var pollTimer: Timer?
     private var hasPromptedForAccessibilityThisSession = false
@@ -27,10 +28,7 @@ final class PermissionHelper: ObservableObject {
     func refresh() {
         micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         speechGranted = SFSpeechRecognizer.authorizationStatus() == .authorized
-        accessibilityGranted = AXIsProcessTrusted()
-        if accessibilityGranted {
-            stopPolling()
-        }
+        updateAccessibilityStatus(AXIsProcessTrusted())
     }
 
     var allGranted: Bool {
@@ -95,9 +93,7 @@ final class PermissionHelper: ObservableObject {
             Task { @MainActor in
                 guard let self else { timer.invalidate(); return }
                 if AXIsProcessTrusted() {
-                    self.accessibilityGranted = true
-                    timer.invalidate()
-                    self.pollTimer = nil
+                    self.updateAccessibilityStatus(true)
                     NSLog("[Permissions] Accessibility granted!")
                 }
             }
@@ -107,6 +103,17 @@ final class PermissionHelper: ObservableObject {
     func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
+    }
+
+    private func updateAccessibilityStatus(_ granted: Bool) {
+        let becameGranted = !accessibilityGranted && granted
+        accessibilityGranted = granted
+        if granted {
+            stopPolling()
+        }
+        if becameGranted {
+            onAccessibilityGranted?()
+        }
     }
 
     // MARK: - Sequential request (only in .app bundle)
@@ -142,3 +149,5 @@ final class PermissionHelper: ObservableObject {
         }
     }
 }
+
+extension PermissionHelper: PermissionManaging {}

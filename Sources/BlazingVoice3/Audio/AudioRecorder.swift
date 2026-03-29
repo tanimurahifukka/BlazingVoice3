@@ -180,3 +180,5 @@ final class AudioRecorder: @unchecked Sendable {
         return recordingsDirectory().appendingPathComponent("\(name).caf")
     }
 }
+
+extension AudioRecorder: AudioRecording {}

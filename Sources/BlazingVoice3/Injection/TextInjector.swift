@@ -8,9 +8,23 @@ enum TextInjector {
         await coordinator.paste(text)
     }
 
+    static func setTestPasteHandler(_ handler: (@Sendable (String) async -> Void)?) async {
+        await coordinator.setTestPasteHandler(handler)
+    }
+
     private actor Coordinator {
+        private var testPasteHandler: (@Sendable (String) async -> Void)?
+
+        func setTestPasteHandler(_ handler: (@Sendable (String) async -> Void)?) {
+            testPasteHandler = handler
+        }
+
         func paste(_ text: String) async {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            if let testPasteHandler {
+                await testPasteHandler(text)
+                return
+            }
 
             let snapshot = await MainActor.run { TextInjector.capturePasteboard() }
             let clipboardWritten = await MainActor.run { TextInjector.writePasteboard(text) }

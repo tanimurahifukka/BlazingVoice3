@@ -1,20 +1,16 @@
 import Cocoa
 
 @MainActor
-final class StatusBarController {
+final class StatusBarController: StatusBarControlling {
     private var statusItem: NSStatusItem?
     private var pulseTimer: Timer?
-
-    enum State {
-        case idle, recording, processing, done, error
-    }
 
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateState(.idle)
     }
 
-    func updateState(_ state: State) {
+    func updateState(_ state: StatusBarVisualState) {
         pulseTimer?.invalidate()
         pulseTimer = nil
 

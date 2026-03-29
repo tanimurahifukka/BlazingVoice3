@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-VERSION="${1:-4.0.5}"
+VERSION="${1:-4.0.7}"
 BUILD_DATE=$(date +"%Y%m%d.%H%M")
 BUILD_ID="${VERSION}.${BUILD_DATE}"
 APP_NAME="BlazingVoice3"

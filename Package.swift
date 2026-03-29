@@ -64,5 +64,10 @@ let package = Package(
                 .copy("Resources/DictionaryPreset.csv"),
             ]
         ),
+        .testTarget(
+            name: "BlazingVoice3Tests",
+            dependencies: ["BlazingVoice3"],
+            path: "Tests/BlazingVoice3Tests"
+        ),
     ]
 )

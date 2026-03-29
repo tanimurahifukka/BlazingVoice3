@@ -5,17 +5,21 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    let settings = AppSettings()
-    let modelManager = ModelManager()
-    let dictionary = UserDictionary()
-    let sessionHistory = SessionHistory()
-    let evolutionLog = EvolutionLog()
-    let permissions = PermissionHelper()
+    let settings: AppSettings
+    let modelManager: ModelManager
+    let dictionary: UserDictionary
+    let sessionHistory: SessionHistory
+    let evolutionLog: EvolutionLog
+    let permissions: any PermissionManaging
 
-    private var statusBarController: StatusBarController?
-    private var overlay: OverlayPanel?
-    private var hotkeyManager: HotkeyManager?
-    private let audioRecorder = AudioRecorder()
+    private var statusBarController: (any StatusBarControlling)?
+    private var overlay: (any OverlayPresenting)?
+    private var hotkeyManager: (any HotkeyManaging)?
+    private let audioRecorder: any AudioRecording
+    private let statusBarControllerFactory: @MainActor () -> any StatusBarControlling
+    private let overlayFactory: @MainActor () -> any OverlayPresenting
+    private let hotkeyManagerFactory: @MainActor () -> any HotkeyManaging
+    private let launchOptions: AppLaunchOptions
 
     /// Per-mode engines. Key = modelId, shared if same model.
     private var engines: [String: any InferenceEngine] = [:]
@@ -30,6 +34,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     @Published var pipelineState: PipelineState = .idle
     @Published var currentMode: VoiceMode = .dictation
+
+    override init() {
+        settings = AppSettings()
+        modelManager = ModelManager()
+        dictionary = UserDictionary()
+        sessionHistory = SessionHistory()
+        evolutionLog = EvolutionLog()
+        permissions = PermissionHelper()
+        audioRecorder = AudioRecorder()
+        statusBarControllerFactory = { StatusBarController() }
+        overlayFactory = { OverlayPanel() }
+        hotkeyManagerFactory = { HotkeyManager() }
+        launchOptions = .live
+        super.init()
+    }
+
+    init(
+        settings: AppSettings,
+        modelManager: ModelManager,
+        dictionary: UserDictionary = UserDictionary(),
+        sessionHistory: SessionHistory,
+        evolutionLog: EvolutionLog,
+        permissions: any PermissionManaging,
+        audioRecorder: any AudioRecording,
+        statusBarControllerFactory: @escaping @MainActor () -> any StatusBarControlling,
+        overlayFactory: @escaping @MainActor () -> any OverlayPresenting,
+        hotkeyManagerFactory: @escaping @MainActor () -> any HotkeyManaging,
+        launchOptions: AppLaunchOptions = .live
+    ) {
+        self.settings = settings
+        self.modelManager = modelManager
+        self.dictionary = dictionary
+        self.sessionHistory = sessionHistory
+        self.evolutionLog = evolutionLog
+        self.permissions = permissions
+        self.audioRecorder = audioRecorder
+        self.statusBarControllerFactory = statusBarControllerFactory
+        self.overlayFactory = overlayFactory
+        self.hotkeyManagerFactory = hotkeyManagerFactory
+        self.launchOptions = launchOptions
+        super.init()
+    }
 
     var engineDescription: String {
         let descs = engines.values.map { $0.modelDescription }
@@ -54,21 +100,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !CLITest.shouldRun() else { return }
+        bootstrapForTesting()
+    }
+
+    func bootstrapForTesting() {
+        _ = NSApplication.shared
 
         currentMode = settings.defaultVoiceMode
-        NSApp.setActivationPolicy(.accessory)
+        NSApplication.shared.setActivationPolicy(.accessory)
 
         // UI setup
-        let sbc = StatusBarController()
+        let sbc = statusBarControllerFactory()
         sbc.setup()
         statusBarController = sbc
 
-        overlay = OverlayPanel()
+        overlay = overlayFactory()
 
         updateStatusMenu()
 
         // Hotkey setup
-        let hk = HotkeyManager()
+        let hk = hotkeyManagerFactory()
         hk.configure(with: settings)
         // Primary: double-tap Left Shift → start/stop with current mode
         hk.onDoubleTap = { [weak self] in
@@ -83,8 +134,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.handleHotkeyPress(mode: mode)
             }
         }
-        hk.startMonitoring()
+        if launchOptions.startHotkeyMonitoring {
+            hk.startMonitoring()
+        }
         hotkeyManager = hk
+        permissions.onAccessibilityGranted = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.hotkeyManager?.restartMonitoring()
+                self?.overlay?.show(message: "ホットキー監視を再開しました", duration: 1.5)
+            }
+        }
 
         audioRecorder.onAutoStop = { [weak self] result in
             Task { @MainActor [weak self] in
@@ -101,9 +160,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSLog("[BlazingVoice3] v%@ started", AppVersion.full)
 
         // Request mic permission at launch (safe: PermissionHelper checks for Info.plist)
-        permissions.requestMicrophone()
-        permissions.requestSpeech()
+        if launchOptions.requestPermissionsOnLaunch {
+            permissions.requestMicrophone()
+            permissions.requestSpeech()
+        }
 
+        guard launchOptions.loadEnginesOnLaunch else { return }
         Task { [weak self] in
             await self?.loadEngine()
         }
@@ -628,6 +690,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         statusBarController?.setMenu(menuBuilder.buildMenu())
     }
 
+    private func performMenuAction(_ action: @MainActor () -> Void) {
+        action()
+    }
+
     @objc func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
@@ -644,12 +710,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     @objc func menuStartRecording() {
-        handleHotkeyPress(mode: currentMode)
+        NSLog("[BlazingVoice3] Menu start recording tapped")
+        performMenuAction { [weak self] in
+            guard let self else { return }
+            self.handleHotkeyPress(mode: self.currentMode)
+        }
     }
 
     @objc func menuStopRecording() {
-        if pipelineState == .recording {
-            handleHotkeyPress(mode: currentMode) // Same as pressing hotkey again
+        NSLog("[BlazingVoice3] Menu stop recording tapped")
+        performMenuAction { [weak self] in
+            guard let self else { return }
+            if self.pipelineState == .recording {
+                self.handleHotkeyPress(mode: self.currentMode) // Same as pressing hotkey again
+            }
         }
     }
 }

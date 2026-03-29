@@ -49,3 +49,5 @@ final class OverlayPanel {
         panel = nil
     }
 }
+
+extension OverlayPanel: OverlayPresenting {}
