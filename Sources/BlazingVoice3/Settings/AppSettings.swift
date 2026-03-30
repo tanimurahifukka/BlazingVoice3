@@ -5,8 +5,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("setupCompleted") var setupCompleted = false
     @AppStorage("launchAtLogin") var launchAtLogin = false
 
-    // MARK: - Voice Mode (default = normal)
-    @AppStorage("defaultVoiceMode") var defaultVoiceModeRaw = VoiceMode.normal.rawValue
+    // MARK: - Voice Mode (default = dictation/SOAP)
+    @AppStorage("defaultVoiceMode") var defaultVoiceModeRaw = VoiceMode.dictation.rawValue
 
     var defaultVoiceMode: VoiceMode {
         get { VoiceMode(rawValue: defaultVoiceModeRaw) ?? .normal }
@@ -35,7 +35,7 @@ final class AppSettings: ObservableObject {
 
     // MARK: - Model (per-mode)
     @AppStorage("engineBackend") var engineBackendRaw = "llama"
-    @AppStorage("dictationModelId") var dictationModelId = "qwen3.5-9b-gguf"
+    @AppStorage("dictationModelId") var dictationModelId = "qwen3.5-4b-gguf"
     @AppStorage("conversationModelId") var conversationModelId = ""
     @AppStorage("normalModelId") var normalModelId = ""
     @AppStorage("clusterModelId") var clusterModelId = ""

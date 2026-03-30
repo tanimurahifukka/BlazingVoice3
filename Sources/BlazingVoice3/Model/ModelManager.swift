@@ -67,7 +67,7 @@ final class ModelManager: ObservableObject {
             sizeGB: 5.5,
             backend: .llama,
             huggingFaceId: "unsloth/Qwen3.5-9B-GGUF",
-            recommended: true
+            recommended: false
         ),
         ModelInfo(
             id: "qwen3.5-4b-gguf",
@@ -75,7 +75,7 @@ final class ModelManager: ObservableObject {
             sizeGB: 2.7,
             backend: .llama,
             huggingFaceId: "unsloth/Qwen3.5-4B-GGUF",
-            recommended: false
+            recommended: true
         ),
         ModelInfo(
             id: "qwen3.5-1.5b-gguf",
@@ -148,12 +148,15 @@ final class ModelManager: ObservableObject {
         }
     }
 
-    /// Download a GGUF model from HuggingFace
+    /// Callback for download progress updates: (progress 0-1, downloadedBytes, totalBytes)
+    var onDownloadProgress: ((Double, Int64, Int64) -> Void)?
+
+    /// Download a GGUF model from HuggingFace with progress reporting.
     func downloadModel(_ model: ModelInfo) async throws {
         guard model.backend == .llama else { return }
 
         isDownloading = true
-        downloadStatus = "Downloading \(model.name)..."
+        downloadStatus = "\(model.name) ダウンロード中..."
         downloadProgress = 0
         defer { isDownloading = false }
 
@@ -161,27 +164,62 @@ final class ModelManager: ObservableObject {
             .appendingPathComponent("models")
         try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [
-            "huggingface-cli", "download",
-            model.huggingFaceId, model.name,
-            "--local-dir", modelsDir.path
-        ]
+        let destPath = modelsDir.appendingPathComponent(model.name)
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw BlazingError.downloadFailed("huggingface-cli exited with status \(process.terminationStatus)")
+        // Already downloaded?
+        if FileManager.default.fileExists(atPath: destPath.path) {
+            downloadProgress = 1.0
+            downloadStatus = "既にダウンロード済: \(model.name)"
+            return
         }
 
+        // Direct HTTPS download from HuggingFace
+        let urlString = "https://huggingface.co/\(model.huggingFaceId)/resolve/main/\(model.name)"
+        guard let url = URL(string: urlString) else {
+            throw BlazingError.downloadFailed("Invalid URL: \(urlString)")
+        }
+
+        NSLog("[BlazingVoice3] Downloading %@ (%.1f GB) from %@", model.name, model.sizeGB, urlString)
+
+        let delegate = DownloadProgressDelegate { [weak self] progress, downloaded, total in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.downloadProgress = progress
+                self.downloadStatus = String(
+                    format: "%@ ダウンロード中... %@/%@",
+                    model.name,
+                    Self.formatBytes(downloaded),
+                    total > 0 ? Self.formatBytes(total) : "?"
+                )
+                self.onDownloadProgress?(progress, downloaded, total)
+            }
+        }
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+
+        let (tempURL, response) = try await session.download(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw BlazingError.downloadFailed("HTTP \(statusCode): \(urlString)")
+        }
+
+        try FileManager.default.moveItem(at: tempURL, to: destPath)
+
         downloadProgress = 1.0
-        downloadStatus = "Download complete: \(model.name)"
+        downloadStatus = "ダウンロード完了: \(model.name)"
+        NSLog("[BlazingVoice3] Download complete: %@", destPath.path)
+
+        scanLocalModels()
+    }
+
+    static func formatBytes(_ bytes: Int64) -> String {
+        let gb = Double(bytes) / 1_073_741_824
+        if gb >= 1.0 {
+            return String(format: "%.1f GB", gb)
+        }
+        let mb = Double(bytes) / 1_048_576
+        return String(format: "%.0f MB", mb)
     }
 
     /// Scan local storage for available GGUF models
@@ -216,5 +254,40 @@ final class ModelManager: ObservableObject {
         }
 
         self.availableModels = found
+    }
+}
+
+// MARK: - Download Progress Delegate
+
+private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate {
+    private let onProgress: (Double, Int64, Int64) -> Void
+
+    init(onProgress: @escaping (Double, Int64, Int64) -> Void) {
+        self.onProgress = onProgress
+        super.init()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        let progress: Double
+        if totalBytesExpectedToWrite > 0 {
+            progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        } else {
+            progress = -1
+        }
+        onProgress(progress, totalBytesWritten, totalBytesExpectedToWrite)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        // Handled by the async download(from:) call
     }
 }

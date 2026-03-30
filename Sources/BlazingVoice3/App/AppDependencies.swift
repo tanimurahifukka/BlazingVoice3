@@ -39,12 +39,16 @@ protocol StatusBarControlling: AnyObject {
 @MainActor
 protocol OverlayPresenting: AnyObject {
     func show(message: String, duration: TimeInterval)
+    func showProgress(message: String, detail: String, progress: Double)
     func hide()
 }
 
 extension OverlayPresenting {
     func show(message: String) {
         show(message: message, duration: 2.0)
+    }
+    func showProgress(message: String, detail: String = "", progress: Double = -1) {
+        showProgress(message: message, detail: detail, progress: progress)
     }
 }
 

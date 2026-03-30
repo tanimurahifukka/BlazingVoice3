@@ -53,4 +53,29 @@ enum BlazingError: Error, CustomStringConvertible {
         case .qualityCheckFailed(let msg): "Quality check failed: \(msg)"
         }
     }
+
+    var userMessage: String {
+        switch self {
+        case .modelLoadFailed(let path): "モデル読込失敗: \(path)"
+        case .vocabLoadFailed: "語彙データの取得に失敗"
+        case .contextCreationFailed: "コンテキスト作成失敗"
+        case .samplerCreationFailed: "サンプラー作成失敗"
+        case .decodeFailed: "LLM推論エラー"
+        case .tokenizationFailed: "トークナイズ失敗"
+        case .templateFailed: "テンプレート適用失敗"
+        case .noSlotsAvailable: "処理スロットが満杯です"
+        case .contextExceeded: "入力が長すぎます"
+        case .remoteNodeFailed: "クラスターノード応答なし"
+        case .microphoneNotAuthorized: "マイク権限がありません"
+        case .whisperModelNotLoaded: "Whisperモデル未読込"
+        case .audioEngineError: "オーディオエンジンエラー"
+        case .noSpeechResult: "音声が検出されませんでした"
+        case .whisperKitUnavailable: "WhisperKit利用不可"
+        case .modelNotFound(let name): "モデル未検出: \(name)"
+        case .downloadFailed(let msg): "ダウンロード失敗: \(msg)"
+        case .insufficientMemory: "メモリ不足"
+        case .agentPipelineFailed(let msg): "\(msg)"
+        case .qualityCheckFailed: "品質チェック失敗"
+        }
+    }
 }

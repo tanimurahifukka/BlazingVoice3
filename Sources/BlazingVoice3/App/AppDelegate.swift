@@ -197,11 +197,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         NSLog("[BlazingVoice3] Loading %d unique model(s)", neededModels.count)
 
+        // Auto-download recommended model if no GGUF files are available
+        let hasAnyDownloaded = modelManager.availableModels.contains { $0.isDownloaded && $0.backend == .llama }
+        if !hasAnyDownloaded {
+            if let recommended = modelManager.availableModels.first(where: { $0.recommended && $0.backend == .llama }) {
+                NSLog("[BlazingVoice3] No models found, auto-downloading: %@", recommended.name)
+                overlay?.showProgress(
+                    message: "初回セットアップ: AIモデルをダウンロード中",
+                    detail: "\(recommended.name) (約\(String(format: "%.1f", recommended.sizeGB)) GB)"
+                )
+
+                // Wire up progress updates to overlay
+                modelManager.onDownloadProgress = { [weak self] progress, downloaded, total in
+                    Task { @MainActor [weak self] in
+                        let detail = String(
+                            format: "%@ / %@ (%d%%)",
+                            ModelManager.formatBytes(downloaded),
+                            total > 0 ? ModelManager.formatBytes(total) : "\(String(format: "%.1f", recommended.sizeGB)) GB",
+                            Int(progress * 100)
+                        )
+                        self?.overlay?.showProgress(
+                            message: "AIモデルをダウンロード中...",
+                            detail: detail,
+                            progress: progress
+                        )
+                    }
+                }
+
+                do {
+                    try await modelManager.downloadModel(recommended)
+                    modelManager.onDownloadProgress = nil
+                    NSLog("[BlazingVoice3] Auto-download complete: %@", recommended.name)
+                    overlay?.show(message: "ダウンロード完了: \(recommended.name)", duration: 2)
+                } catch {
+                    modelManager.onDownloadProgress = nil
+                    NSLog("[BlazingVoice3] Auto-download failed: %@", "\(error)")
+                    overlay?.show(message: "モデルダウンロード失敗: \(error.localizedDescription)", duration: 10)
+                }
+            }
+        }
+
+        var failedModels: [String] = []
+
         for modelId in neededModels {
             guard let model = modelManager.availableModels.first(where: { $0.id == modelId })
                     ?? modelManager.availableModels.first(where: { $0.recommended })
                     ?? modelManager.availableModels.first(where: { $0.isDownloaded }) else {
-                NSLog("[BlazingVoice3] Model '%@' not found, skipping", modelId)
+                NSLog("[BlazingVoice3] ERROR: Model '%@' not found in available models", modelId)
+                failedModels.append(modelId)
                 continue
             }
 
@@ -210,11 +253,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 if let fallback = modelManager.availableModels.first(where: { $0.backend == .llama && $0.isDownloaded }) {
                     NSLog("[BlazingVoice3] MLX skipped, using llama fallback: %@", fallback.name)
                     await loadSingleEngine(model: fallback, forModelId: modelId)
+                } else {
+                    NSLog("[BlazingVoice3] ERROR: MLX skipped and no llama fallback for '%@'", modelId)
+                    failedModels.append(modelId)
                 }
                 continue
             }
 
             await loadSingleEngine(model: model, forModelId: modelId)
+
+            // Check if engine was actually loaded
+            if engines[modelId] == nil {
+                failedModels.append(modelId)
+            }
         }
 
         // Setup orchestrator with dictation engine
@@ -222,10 +273,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if settings.clusterEnabled { setupCluster() }
 
         pipelineState = .idle
-        statusBarController?.updateState(.idle)
-        let names = engines.values.map { $0.modelDescription }
-        overlay?.show(message: "準備完了 (\(names.count)エンジン)", duration: 2)
-        NSLog("[BlazingVoice3] All engines loaded: %@", names.joined(separator: ", "))
+
+        if engines.isEmpty {
+            statusBarController?.updateState(.error)
+            let msg = "モデル未検出: ~/models/ にGGUFを配置してください"
+            overlay?.show(message: msg, duration: 10)
+            NSLog("[BlazingVoice3] FATAL: No engines loaded. Failed: %@", failedModels.joined(separator: ", "))
+        } else if !failedModels.isEmpty {
+            statusBarController?.updateState(.idle)
+            let names = engines.values.map { $0.modelDescription }
+            overlay?.show(message: "一部モデル未検出 (\(names.count)エンジン読込済)", duration: 5)
+            NSLog("[BlazingVoice3] Partial load: %@, failed: %@",
+                  names.joined(separator: ", "), failedModels.joined(separator: ", "))
+        } else {
+            statusBarController?.updateState(.idle)
+            let names = engines.values.map { $0.modelDescription }
+            overlay?.show(message: "準備完了 (\(names.count)エンジン)", duration: 2)
+            NSLog("[BlazingVoice3] All engines loaded: %@", names.joined(separator: ", "))
+        }
         updateStatusMenu()
     }
 
@@ -239,12 +304,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        overlay?.show(message: "読込中: \(model.name)...", duration: 300)
+        overlay?.showProgress(
+            message: "AIモデルを読込中...",
+            detail: model.name
+        )
         NSLog("[BlazingVoice3] Loading: %@ (for '%@')", model.name, forModelId)
 
         do {
             if !model.isDownloaded && model.backend == .llama {
+                overlay?.showProgress(
+                    message: "モデルをダウンロード中...",
+                    detail: "\(model.name) (約\(String(format: "%.1f", model.sizeGB)) GB)"
+                )
+                modelManager.onDownloadProgress = { [weak self] progress, downloaded, total in
+                    Task { @MainActor [weak self] in
+                        let detail = String(
+                            format: "%@ / %@ (%d%%)",
+                            ModelManager.formatBytes(downloaded),
+                            total > 0 ? ModelManager.formatBytes(total) : "\(String(format: "%.1f", model.sizeGB)) GB",
+                            Int(progress * 100)
+                        )
+                        self?.overlay?.showProgress(
+                            message: "モデルをダウンロード中...",
+                            detail: detail,
+                            progress: progress
+                        )
+                    }
+                }
                 try await modelManager.downloadModel(model)
+                modelManager.onDownloadProgress = nil
             }
 
             let eng = try await modelManager.createEngine(
@@ -256,7 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             engines[forModelId] = eng
             NSLog("[BlazingVoice3] Loaded: %@", eng.modelDescription)
         } catch {
-            NSLog("[BlazingVoice3] Failed to load '%@': %@", model.name, "\(error)")
+            NSLog("[BlazingVoice3] ERROR: Failed to load '%@': %@", model.name, "\(error)")
+            overlay?.show(message: "モデル読込失敗: \(model.name)", duration: 5)
         }
     }
 
@@ -388,7 +477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSLog("[BlazingVoice3] stopRecordingAndProcess")
         pipelineState = .processing
         statusBarController?.updateState(.processing)
-        overlay?.show(message: "文字起こし中...", duration: 120)
+        overlay?.showProgress(message: "音声を文字起こし中...")
         updateStatusMenu()
 
         Task { [weak self] in
@@ -416,7 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
               rawText.count, orchestrator != nil ? 1 : 0)
         pipelineState = .processing
         statusBarController?.updateState(.processing)
-        overlay?.show(message: "LLM処理中...", duration: 120)
+        overlay?.showProgress(message: "\(currentMode.displayName) 変換中...")
         updateStatusMenu()
 
         let mode = currentMode
@@ -431,13 +520,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             do {
                 // Use the engine for the current mode, not just the dictation engine
                 guard let modeEngine = self.engineForMode(mode) else {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(rawText, forType: .string)
-                    pipelineState = .done
-                    statusBarController?.updateState(.done)
-                    overlay?.show(message: "文字起こし完了 (Cmd+V)")
-                    updateStatusMenu()
-                    resetAfterDelay()
+                    NSLog("[BlazingVoice3] ERROR: No engine loaded for mode '%@'", mode.rawValue)
+                    self.handlePipelineFailure(
+                        BlazingError.agentPipelineFailed("エンジン未読込: モデルをダウンロードして再起動してください")
+                    )
                     return
                 }
 
@@ -478,11 +564,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func handlePipelineFailure(_ error: Error) {
-        pipelineState = .error(error.localizedDescription)
+        let message: String
+        if let blazingError = error as? BlazingError {
+            message = blazingError.userMessage
+        } else {
+            message = "処理エラー: \(error.localizedDescription)"
+        }
+        pipelineState = .error(message)
         statusBarController?.updateState(.error)
-        overlay?.show(message: "処理エラー")
+        overlay?.show(message: message, duration: 5)
         updateStatusMenu()
-        print("[BlazingVoice3] Pipeline error: \(error)")
+        NSLog("[BlazingVoice3] Pipeline error: %@", "\(error)")
         resetAfterDelay()
     }
 
