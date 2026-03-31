@@ -185,6 +185,12 @@ final class LlamaEngine: InferenceEngine, @unchecked Sendable {
                 admitted.append(i)
                 continue
             }
+            // Repetition penalty: prevent degenerate loops
+            // last_n=128: look back 128 tokens for repeats
+            // penalty=1.3: strong penalty on repeated tokens
+            // freq/presence penalties add further suppression
+            llama_sampler_chain_add(sampler, llama_sampler_init_penalties(128, 1.3, 0.1, 0.1))
+
             if job.temperature < 0.01 {
                 llama_sampler_chain_add(sampler, llama_sampler_init_greedy())
             } else {
@@ -286,6 +292,12 @@ final class LlamaEngine: InferenceEngine, @unchecked Sendable {
 
             if job.outputTokens.count >= job.maxTokens {
                 let text = detokenize(tokens: job.outputTokens)
+                job.complete(text: text)
+            } else if job.outputTokens.count >= 32, detectRepetitionLoop(tokens: job.outputTokens) {
+                // Repetition loop detected — stop early and trim
+                NSLog("[LlamaEngine] Repetition loop detected at %d tokens, stopping early", job.outputTokens.count)
+                let trimmed = trimRepeatedSuffix(tokens: job.outputTokens)
+                let text = detokenize(tokens: trimmed)
                 job.complete(text: text)
             }
         }
@@ -399,5 +411,61 @@ final class LlamaEngine: InferenceEngine, @unchecked Sendable {
         guard written > 0 else { return nil }
         buf[Int(written)] = 0
         return String(cString: buf)
+    }
+
+    // MARK: - Repetition Detection
+
+    /// Detect if the last N tokens form a repeating pattern.
+    /// Checks for patterns of length 2..16 repeating at least 3 times.
+    private func detectRepetitionLoop(tokens: [llama_token]) -> Bool {
+        let count = tokens.count
+        // Check pattern lengths from 2 to 16
+        for patLen in 2...min(16, count / 3) {
+            let minRepeats = 3
+            let needed = patLen * minRepeats
+            guard count >= needed else { continue }
+
+            let pattern = Array(tokens[(count - patLen)..<count])
+            var repeats = 1
+            for r in 1..<minRepeats {
+                let start = count - patLen * (r + 1)
+                guard start >= 0 else { break }
+                let chunk = Array(tokens[start..<(start + patLen)])
+                if chunk == pattern {
+                    repeats += 1
+                } else {
+                    break
+                }
+            }
+            if repeats >= minRepeats {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Trim repeated suffix from tokens, keeping only one instance of the pattern.
+    private func trimRepeatedSuffix(tokens: [llama_token]) -> [llama_token] {
+        let count = tokens.count
+        for patLen in 2...min(16, count / 3) {
+            let pattern = Array(tokens[(count - patLen)..<count])
+            var repeats = 0
+            var pos = count - patLen
+            while pos >= patLen {
+                let start = pos - patLen
+                let chunk = Array(tokens[start..<pos])
+                if chunk == pattern {
+                    repeats += 1
+                    pos = start
+                } else {
+                    break
+                }
+            }
+            if repeats >= 2 {
+                // Keep everything up to and including the first occurrence
+                return Array(tokens[0..<(pos + patLen)])
+            }
+        }
+        return tokens
     }
 }
