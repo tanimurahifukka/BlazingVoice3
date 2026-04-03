@@ -2,8 +2,8 @@ import Foundation
 
 enum AppVersion {
     static let major = 4
-    static let minor = 0
-    static let patch = 7
+    static let minor = 2
+    static let patch = 0
 
     /// ビルド日時 (自動生成)
     static let buildDate: String = {

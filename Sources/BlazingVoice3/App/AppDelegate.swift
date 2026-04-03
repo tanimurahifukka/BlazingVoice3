@@ -99,12 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     // MARK: - App Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        debugLog("applicationDidFinishLaunching")
         guard !CLITest.shouldRun() else { return }
         bootstrapForTesting()
     }
 
     func bootstrapForTesting() {
         _ = NSApplication.shared
+        debugLog("bootstrapForTesting start, defaultMode=\(settings.defaultVoiceModeRaw)")
 
         currentMode = settings.defaultVoiceMode
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -159,15 +161,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         NSLog("[BlazingVoice3] v%@ started", AppVersion.full)
 
-        // Request mic permission at launch (safe: PermissionHelper checks for Info.plist)
-        if launchOptions.requestPermissionsOnLaunch {
-            permissions.requestMicrophone()
-            permissions.requestSpeech()
-        }
-
         guard launchOptions.loadEnginesOnLaunch else { return }
         Task { [weak self] in
             await self?.loadEngine()
+            // Request permissions AFTER engine load (avoids TCC crash on first launch)
+            if self?.launchOptions.requestPermissionsOnLaunch == true {
+                self?.debugLog("Requesting permissions after engine load")
+                self?.permissions.requestMicrophone()
+                // Delay speech permission request to avoid TCC race
+                try? await Task.sleep(for: .seconds(1))
+                self?.permissions.requestSpeech()
+            }
         }
     }
 
@@ -189,16 +193,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         statusBarController?.updateState(.processing)
         updateStatusMenu()
 
+        debugLog("loadEngine start")
+
         // Collect unique model IDs needed across all modes
         var neededModels: Set<String> = []
         for mode in VoiceMode.allCases {
             neededModels.insert(settings.modelId(for: mode))
         }
 
-        NSLog("[BlazingVoice3] Loading %d unique model(s)", neededModels.count)
+        debugLog("Loading \(neededModels.count) unique model(s): \(neededModels.joined(separator: ", "))")
+        debugLog("Available models: \(modelManager.availableModels.map { "\($0.id) downloaded=\($0.isDownloaded)" }.joined(separator: ", "))")
 
         // Auto-download recommended model if no GGUF files are available
         let hasAnyDownloaded = modelManager.availableModels.contains { $0.isDownloaded && $0.backend == .llama }
+        debugLog("hasAnyDownloaded=\(hasAnyDownloaded)")
         if !hasAnyDownloaded {
             if let recommended = modelManager.availableModels.first(where: { $0.recommended && $0.backend == .llama }) {
                 NSLog("[BlazingVoice3] No models found, auto-downloading: %@", recommended.name)
@@ -827,5 +835,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSPasteboard.general.setString(session.generatedText, forType: .string)
         overlay?.show(message: "履歴をコピーしました (Cmd+V)", duration: 1.5)
         NSLog("[BlazingVoice3] Copied history item %d to clipboard", index)
+    }
+
+    // MARK: - Debug Log
+
+    private static let debugLogURL: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("BlazingVoice3.log")
+    }()
+
+    private func debugLog(_ message: String) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(timestamp)] \(message)\n"
+        NSLog("[BlazingVoice3] %@", message)
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: Self.debugLogURL.path) {
+                if let handle = try? FileHandle(forWritingTo: Self.debugLogURL) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                try? data.write(to: Self.debugLogURL)
+            }
+        }
     }
 }

@@ -22,6 +22,13 @@ mkdir -p "${BUNDLE_DIR}/Contents/Resources"
 
 cp .build/release/${APP_NAME} "${BUNDLE_DIR}/Contents/MacOS/"
 
+# Copy SPM resource bundle if it exists
+RESOURCE_BUNDLE=".build/release/BlazingVoice3_BlazingVoice3.bundle"
+if [ -d "${RESOURCE_BUNDLE}" ]; then
+    cp -R "${RESOURCE_BUNDLE}" "${BUNDLE_DIR}/Contents/Resources/"
+    echo "  Copied resource bundle"
+fi
+
 cat > "${BUNDLE_DIR}/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -66,7 +73,7 @@ cat > "entitlements.plist" << ENTITLEMENTS
 </plist>
 ENTITLEMENTS
 
-codesign --force --sign - --entitlements entitlements.plist "${BUNDLE_DIR}"
+codesign --force --deep --sign - --identifier com.blazingvoice3.app --entitlements entitlements.plist "${BUNDLE_DIR}"
 rm entitlements.plist
 
 # Create install script
@@ -95,12 +102,15 @@ fi
 echo "[1/3] Applications にコピー中..."
 cp -R "$APP_SRC" "$APP_DST"
 
-# Remove quarantine (Gatekeeper bypass for ad-hoc signed app)
-echo "[2/3] セキュリティ設定を解除中..."
+# Remove quarantine and re-sign (Gatekeeper bypass for ad-hoc signed app)
+echo "[2/4] セキュリティ設定を解除中..."
 xattr -cr "$APP_DST"
 
+echo "[3/4] コード署名を適用中..."
+codesign --force --deep --sign - --identifier com.blazingvoice3.app "$APP_DST"
+
 # Launch
-echo "[3/3] 起動中..."
+echo "[4/4] 起動中..."
 open "$APP_DST"
 
 echo ""
