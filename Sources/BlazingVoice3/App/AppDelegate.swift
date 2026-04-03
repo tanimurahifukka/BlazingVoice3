@@ -818,4 +818,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
     }
+
+    @objc func menuCopyHistory(_ sender: NSMenuItem) {
+        let index = sender.tag
+        guard index >= 0, index < sessionHistory.sessions.count else { return }
+        let session = sessionHistory.sessions[index]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(session.generatedText, forType: .string)
+        overlay?.show(message: "履歴をコピーしました (Cmd+V)", duration: 1.5)
+        NSLog("[BlazingVoice3] Copied history item %d to clipboard", index)
+    }
 }

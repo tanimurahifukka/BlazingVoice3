@@ -3,7 +3,9 @@ import Foundation
 /// Tracks pipeline execution history and user feedback for prompt evolution.
 @MainActor
 final class EvolutionLog: ObservableObject {
-    struct LogEntry: Identifiable, Codable {
+    struct LogEntry: Identifiable, Codable, Hashable {
+        static func == (lhs: LogEntry, rhs: LogEntry) -> Bool { lhs.id == rhs.id }
+        func hash(into hasher: inout Hasher) { hasher.combine(id) }
         let id: UUID
         let date: Date
         let rawText: String

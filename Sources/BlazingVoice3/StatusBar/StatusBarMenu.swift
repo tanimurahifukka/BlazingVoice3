@@ -73,16 +73,27 @@ final class StatusBarMenu {
 
         menu.addItem(NSMenuItem.separator())
 
-        // History
+        // History (clickable — copies to clipboard)
         if let history = appDelegate?.sessionHistory, !history.sessions.isEmpty {
-            let historyItem = NSMenuItem(title: "履歴 (\(history.sessions.count))", action: nil, keyEquivalent: "")
+            let historyItem = NSMenuItem(title: "履歴 (\(history.sessions.count)) — クリックでコピー", action: nil, keyEquivalent: "")
             historyItem.isEnabled = false
             menu.addItem(historyItem)
 
-            for session in history.sessions.prefix(3) {
-                let text = String(session.generatedText.prefix(35))
-                let item = NSMenuItem(title: "  \(text)...", action: nil, keyEquivalent: "")
-                item.isEnabled = false
+            for (i, session) in history.sessions.prefix(5).enumerated() {
+                let modePrefix = switch session.mode {
+                case .dictation: "S"
+                case .conversation: "B"
+                case .normal: "N"
+                case .cluster: "C"
+                }
+                let text = String(session.generatedText.prefix(40)).replacingOccurrences(of: "\n", with: " ")
+                let item = NSMenuItem(
+                    title: "  [\(modePrefix)] \(text)...",
+                    action: #selector(AppDelegate.menuCopyHistory(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = appDelegate
+                item.tag = i
                 menu.addItem(item)
             }
 

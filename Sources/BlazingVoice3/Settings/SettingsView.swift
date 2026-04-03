@@ -13,8 +13,10 @@ struct SettingsView: View {
                 .tabItem { Label("プロンプト", systemImage: "text.quote") }
             AdvancedSettingsView()
                 .tabItem { Label("上級", systemImage: "wrench.and.screwdriver") }
+            EvolutionSettingsView()
+                .tabItem { Label("履歴・進化", systemImage: "brain") }
         }
-        .frame(width: 560, height: 480)
+        .frame(width: 700, height: 520)
     }
 }
 

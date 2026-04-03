@@ -19,6 +19,7 @@ struct BlazingVoice3App: App {
                 .environmentObject(appDelegate.settings)
                 .environmentObject(appDelegate.modelManager)
                 .environmentObject(appDelegate.dictionary)
+                .environmentObject(appDelegate.evolutionLog)
                 .environmentObject(appDelegate)
         }
         Window("セットアップ", id: "setup-wizard") {
