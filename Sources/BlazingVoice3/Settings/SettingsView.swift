@@ -192,7 +192,7 @@ struct AdvancedSettingsView: View {
                                 }
                             }
                         }
-                        Text("brew install whisper-cpp でインストール後、whisper-cli のパスと ggml モデルファイル (.bin) を指定してください。履歴・進化タブで録音を再評価できます。")
+                        Text("brew install whisper-cpp でインストール後、whisper-cli パスと ggml モデルファイル (.bin) の指定が必要。履歴・進化タブで録音の再評価が可能。")
                             .font(.caption).foregroundStyle(.secondary)
 
                         if settings.isWhisperConfigured {

@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                         // Whisper record-only mode: auto-stop triggered, run Whisper
                         self.pipelineState = .processing
                         self.statusBarController?.updateState(.processing)
-                        self.overlay?.showProgress(message: "Whisperで文字起こし中...")
+                        self.overlay?.showProgress(message: "Whisper 文字起こし処理中")
                         let evaluator = WhisperEvaluator(
                             whisperCLIPath: self.settings.whisperCLIPath,
                             modelPath: self.settings.whisperModelPath
@@ -500,7 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             pipelineState = .recording
             statusBarController?.updateState(.recording)
             let engineLabel = useWhisper ? "Whisper" : "Apple STT"
-            overlay?.show(message: "\(currentMode.displayName) 録音中 (\(engineLabel))", duration: 60)
+            overlay?.show(message: "\(currentMode.displayName) 録音中 — \(engineLabel)", duration: 60)
             updateStatusMenu()
             NSLog("[BlazingVoice3] Recording started OK")
         } catch {
@@ -519,7 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         updateStatusMenu()
 
         if useWhisper {
-            overlay?.showProgress(message: "Whisperで文字起こし中...")
+            overlay?.showProgress(message: "Whisper 文字起こし処理中")
             Task { [weak self] in
                 guard let self else { return }
                 do {

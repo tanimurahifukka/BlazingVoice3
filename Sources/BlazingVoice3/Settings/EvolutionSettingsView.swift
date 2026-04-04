@@ -180,7 +180,7 @@ struct EvolutionSettingsView: View {
                     } else if isWhisperEvaluating {
                         ProgressView()
                             .controlSize(.small)
-                        Text("評価中...")
+                        Text("再評価中")
                             .font(.caption2)
                     } else {
                         Button("Whisperで再評価") {
@@ -197,7 +197,7 @@ struct EvolutionSettingsView: View {
             }
 
             if !settings.isWhisperConfigured {
-                Text("上級タブでwhisper-cliのパスとモデルを設定してください")
+                Text("上級タブでwhisper-cliパスとモデルの設定が必要")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
