@@ -152,7 +152,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success(let rawText):
-                    self.processTranscription(rawText)
+                    if rawText.isEmpty, let url = self.audioRecorder.lastRecordingURL {
+                        // Whisper record-only mode: auto-stop triggered, run Whisper
+                        self.pipelineState = .processing
+                        self.statusBarController?.updateState(.processing)
+                        self.overlay?.showProgress(message: "Whisperで文字起こし中...")
+                        let evaluator = WhisperEvaluator(
+                            whisperCLIPath: self.settings.whisperCLIPath,
+                            modelPath: self.settings.whisperModelPath
+                        )
+                        do {
+                            let whisperResult = try await evaluator.evaluate(recordingURL: url)
+                            let text = whisperResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !text.isEmpty {
+                                self.processTranscription(text)
+                            }
+                        } catch {
+                            self.handlePipelineFailure(error)
+                        }
+                    } else {
+                        self.processTranscription(rawText)
+                    }
                 case .failure(let error):
                     self.handlePipelineFailure(error)
                 }
@@ -425,13 +445,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
+    private var useWhisper: Bool {
+        settings.isWhisperConfigured && currentMode != .normal
+    }
+
     private func startRecording() {
         // Refresh permissions every time
         permissions.refresh()
-        NSLog("[BlazingVoice3] startRecording: mic=%d speech=%d accessibility=%d",
+        NSLog("[BlazingVoice3] startRecording: mic=%d speech=%d accessibility=%d whisper=%d",
               permissions.micGranted ? 1 : 0,
               permissions.speechGranted ? 1 : 0,
-              permissions.accessibilityGranted ? 1 : 0)
+              permissions.accessibilityGranted ? 1 : 0,
+              useWhisper ? 1 : 0)
 
         // Auto-request permissions (safe: PermissionHelper checks for Info.plist)
         if !permissions.micGranted {
@@ -450,7 +475,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        if !permissions.speechGranted {
+        // Speech permission only needed for Apple STT (not Whisper)
+        if !useWhisper && !permissions.speechGranted {
             NSLog("[BlazingVoice3] Speech not granted, requesting...")
             permissions.requestSpeech()
             overlay?.show(message: "音声認識を許可してください")
@@ -465,11 +491,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         do {
-            NSLog("[BlazingVoice3] Starting audio recording")
-            try audioRecorder.startRecording(maxDuration: settings.maxRecordingDuration)
+            NSLog("[BlazingVoice3] Starting audio recording (whisper=%d)", useWhisper ? 1 : 0)
+            if useWhisper {
+                try audioRecorder.startRecordingOnly(maxDuration: settings.maxRecordingDuration)
+            } else {
+                try audioRecorder.startRecording(maxDuration: settings.maxRecordingDuration)
+            }
             pipelineState = .recording
             statusBarController?.updateState(.recording)
-            overlay?.show(message: "\(currentMode.displayName) 録音中", duration: 60)
+            let engineLabel = useWhisper ? "Whisper" : "Apple STT"
+            overlay?.show(message: "\(currentMode.displayName) 録音中 (\(engineLabel))", duration: 60)
             updateStatusMenu()
             NSLog("[BlazingVoice3] Recording started OK")
         } catch {
@@ -482,28 +513,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func stopRecordingAndProcess() {
-        NSLog("[BlazingVoice3] stopRecordingAndProcess")
+        NSLog("[BlazingVoice3] stopRecordingAndProcess (whisper=%d)", useWhisper ? 1 : 0)
         pipelineState = .processing
         statusBarController?.updateState(.processing)
-        overlay?.showProgress(message: "音声を文字起こし中...")
         updateStatusMenu()
 
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let rawText = try await audioRecorder.stopRecordingAndTranscribe()
-                NSLog("[BlazingVoice3] STT complete: %d chars", rawText.count)
-                self.processTranscription(rawText)
-            } catch BlazingError.noSpeechResult {
-                // Empty recording — just go back to idle silently
-                NSLog("[BlazingVoice3] No speech detected, returning to idle")
-                self.pipelineState = .idle
-                self.statusBarController?.updateState(.idle)
-                self.overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
-                self.updateStatusMenu()
-            } catch {
-                NSLog("[BlazingVoice3] STT failed: %@", "\(error)")
-                self.handlePipelineFailure(error)
+        if useWhisper {
+            overlay?.showProgress(message: "Whisperで文字起こし中...")
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let recordingURL = try self.audioRecorder.stopRecording()
+                    NSLog("[BlazingVoice3] Recording saved, starting Whisper: %@", recordingURL.lastPathComponent)
+
+                    let evaluator = WhisperEvaluator(
+                        whisperCLIPath: self.settings.whisperCLIPath,
+                        modelPath: self.settings.whisperModelPath
+                    )
+                    let result = try await evaluator.evaluate(recordingURL: recordingURL)
+                    let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    NSLog("[BlazingVoice3] Whisper STT complete: %d chars (%.1fs)", rawText.count, result.processingTime)
+
+                    guard !rawText.isEmpty else {
+                        self.pipelineState = .idle
+                        self.statusBarController?.updateState(.idle)
+                        self.overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
+                        self.updateStatusMenu()
+                        return
+                    }
+
+                    self.processTranscription(rawText)
+                } catch {
+                    NSLog("[BlazingVoice3] Whisper STT failed: %@", "\(error)")
+                    self.handlePipelineFailure(error)
+                }
+            }
+        } else {
+            overlay?.showProgress(message: "音声を文字起こし中...")
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let rawText = try await audioRecorder.stopRecordingAndTranscribe()
+                    NSLog("[BlazingVoice3] STT complete: %d chars", rawText.count)
+                    self.processTranscription(rawText)
+                } catch BlazingError.noSpeechResult {
+                    NSLog("[BlazingVoice3] No speech detected, returning to idle")
+                    self.pipelineState = .idle
+                    self.statusBarController?.updateState(.idle)
+                    self.overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
+                    self.updateStatusMenu()
+                } catch {
+                    NSLog("[BlazingVoice3] STT failed: %@", "\(error)")
+                    self.handlePipelineFailure(error)
+                }
             }
         }
     }

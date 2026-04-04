@@ -164,6 +164,67 @@ final class AudioRecorder: @unchecked Sendable {
         return text
     }
 
+    // MARK: - Record Only (no STT, for Whisper)
+
+    func startRecordingOnly(maxDuration: TimeInterval = 300) throws {
+        NSLog("[Audio] startRecordingOnly called")
+
+        let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        guard micStatus == .authorized else {
+            throw BlazingError.microphoneNotAuthorized
+        }
+
+        let engine = AVAudioEngine()
+        audioEngine = engine
+
+        let inputNode = engine.inputNode
+        let recordingURL = Self.newRecordingURL()
+        lastRecordingURL = recordingURL
+        let tapFormat = inputNode.outputFormat(forBus: 0)
+
+        do {
+            audioFile = try AVAudioFile(forWriting: recordingURL, settings: tapFormat.settings)
+        } catch {
+            NSLog("[Audio] could not create audio file: %@", "\(error)")
+            throw BlazingError.audioEngineError
+        }
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, _ in
+            try? self?.audioFile?.write(from: buffer)
+        }
+
+        engine.prepare()
+        try engine.start()
+        NSLog("[Audio] Record-only started")
+
+        autoStopTimer = Timer.scheduledTimer(withTimeInterval: maxDuration, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            if (try? self.stopRecording()) != nil {
+                self.onAutoStop?(.success(""))  // Signal auto-stop; text will come from Whisper
+            }
+        }
+    }
+
+    func stopRecording() throws -> URL {
+        NSLog("[Audio] stopRecording (no STT)")
+
+        autoStopTimer?.invalidate()
+        autoStopTimer = nil
+
+        audioEngine?.stop()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine = nil
+        audioFile = nil
+
+        guard let url = lastRecordingURL,
+              FileManager.default.fileExists(atPath: url.path) else {
+            throw BlazingError.noSpeechResult
+        }
+
+        NSLog("[Audio] Recording saved: %@", url.lastPathComponent)
+        return url
+    }
+
     // MARK: - File
 
     static func recordingsDirectory() -> URL {

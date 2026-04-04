@@ -67,6 +67,16 @@ final class TestAudioRecorder: AudioRecording, @unchecked Sendable {
         return try stopResult.get()
     }
 
+    func startRecordingOnly(maxDuration: TimeInterval) throws {
+        startCount += 1
+        if let startError { throw startError }
+    }
+
+    func stopRecording() throws -> URL {
+        stopCount += 1
+        return lastRecordingURL ?? URL(fileURLWithPath: "/tmp/test.caf")
+    }
+
     func emitPartial(_ text: String) {
         onPartialResult?(text)
     }

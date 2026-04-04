@@ -28,6 +28,10 @@ protocol AudioRecording: AnyObject, Sendable {
 
     func startRecording(maxDuration: TimeInterval) throws
     func stopRecordingAndTranscribe() async throws -> String
+
+    /// Record audio only (no STT). Use for Whisper-based transcription.
+    func startRecordingOnly(maxDuration: TimeInterval) throws
+    func stopRecording() throws -> URL
 }
 
 @MainActor
