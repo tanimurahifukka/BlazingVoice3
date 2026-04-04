@@ -9,6 +9,7 @@ final class SessionHistory: ObservableObject {
         let mode: VoiceMode
         let qualityScore: Double
         let date: Date
+        let recordingURL: URL?
     }
 
     @Published var sessions: [Session] = []
@@ -21,7 +22,8 @@ final class SessionHistory: ObservableObject {
             generatedText: result.generatedText,
             mode: result.mode,
             qualityScore: result.qualityScore,
-            date: Date()
+            date: Date(),
+            recordingURL: result.recordingURL
         )
         sessions.insert(session, at: 0)
         if sessions.count > maxSessions {

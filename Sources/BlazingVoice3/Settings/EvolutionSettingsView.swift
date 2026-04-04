@@ -4,6 +4,7 @@ struct EvolutionSettingsView: View {
     @EnvironmentObject var evolutionLog: EvolutionLog
     @EnvironmentObject var dictionary: UserDictionary
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var appDelegate: AppDelegate
 
     @State private var selectedEntry: EvolutionLog.LogEntry?
     @State private var feedbackText = ""
@@ -11,6 +12,10 @@ struct EvolutionSettingsView: View {
     @State private var evolutionStatus = ""
     @State private var showEvolutionResult = false
     @State private var lastEvolutionSummary = ""
+    @State private var isWhisperEvaluating = false
+    @State private var whisperResult: String?
+    @State private var whisperTime: TimeInterval?
+    @State private var whisperError: String?
 
     var body: some View {
         HSplitView {
@@ -108,8 +113,11 @@ struct EvolutionSettingsView: View {
 
                         Divider()
 
-                        // Raw text
-                        sectionBox("音声認識テキスト", text: entry.rawText, color: .orange)
+                        // Raw text (Apple STT)
+                        sectionBox("音声認識テキスト (Apple STT)", text: entry.rawText, color: .orange)
+
+                        // Whisper re-evaluation
+                        whisperSection(entry)
 
                         // Corrected text (if different)
                         if entry.correctedText != entry.rawText {
@@ -151,6 +159,107 @@ struct EvolutionSettingsView: View {
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(color.opacity(0.2)))
         }
+    }
+
+    // MARK: - Whisper Re-evaluation
+
+    private func whisperSection(_ entry: EvolutionLog.LogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Whisper再評価")
+                    .font(.caption.bold())
+                    .foregroundStyle(.cyan)
+                Spacer()
+
+                if let url = entry.recordingURL {
+                    let exists = FileManager.default.fileExists(atPath: url.path)
+                    if !exists {
+                        Text("録音ファイル削除済")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else if isWhisperEvaluating {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("評価中...")
+                            .font(.caption2)
+                    } else {
+                        Button("Whisperで再評価") {
+                            Task { await runWhisperEvaluation(entry) }
+                        }
+                        .font(.caption)
+                        .disabled(!settings.isWhisperConfigured)
+                    }
+                } else {
+                    Text("録音ファイルなし")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !settings.isWhisperConfigured {
+                Text("上級タブでwhisper-cliのパスとモデルを設定してください")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = whisperError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+
+            if let result = whisperResult {
+                Text(result)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cyan.opacity(0.05))
+                    .cornerRadius(6)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.cyan.opacity(0.2)))
+
+                // Comparison
+                HStack(spacing: 12) {
+                    Text("Apple STT: \(entry.rawText.count)文字")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text("Whisper: \(result.count)文字")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    if let time = whisperTime {
+                        Text(String(format: "%.1f秒", time))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func runWhisperEvaluation(_ entry: EvolutionLog.LogEntry) async {
+        guard let url = entry.recordingURL,
+              FileManager.default.fileExists(atPath: url.path) else { return }
+
+        isWhisperEvaluating = true
+        whisperResult = nil
+        whisperError = nil
+        whisperTime = nil
+
+        let evaluator = WhisperEvaluator(
+            whisperCLIPath: settings.whisperCLIPath,
+            modelPath: settings.whisperModelPath
+        )
+
+        do {
+            let result = try await evaluator.evaluate(recordingURL: url)
+            whisperResult = result.text
+            whisperTime = result.processingTime
+        } catch {
+            whisperError = error.localizedDescription
+        }
+
+        isWhisperEvaluating = false
     }
 
     // MARK: - Feedback & Evolution
@@ -238,10 +347,8 @@ struct EvolutionSettingsView: View {
         isEvolving = true
         evolutionStatus = "フィードバックを分析中..."
 
-        // Get engine from AppDelegate (via notification or shared state)
-        guard let appDelegate = NSApp.delegate as? AppDelegate,
-              let engine = appDelegate.engineForMode(.dictation) else {
-            evolutionStatus = "エラー: エンジンが読み込まれていません"
+        guard let engine = appDelegate.engineForMode(.dictation) else {
+            evolutionStatus = "エラー: エンジンが読み込まれていません。アプリを再起動してください。"
             isEvolving = false
             return
         }

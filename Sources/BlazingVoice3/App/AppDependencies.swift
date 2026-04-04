@@ -24,6 +24,7 @@ protocol PermissionManaging: AnyObject {
 protocol AudioRecording: AnyObject, Sendable {
     var onAutoStop: ((Result<String, Error>) -> Void)? { get set }
     var onPartialResult: ((String) -> Void)? { get set }
+    var lastRecordingURL: URL? { get }
 
     func startRecording(maxDuration: TimeInterval) throws
     func stopRecordingAndTranscribe() async throws -> String

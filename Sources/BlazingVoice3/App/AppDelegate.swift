@@ -548,15 +548,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     mode: mode,
                     customPrompt: customPrompt
                 )
+                let resultWithURL = result.withRecordingURL(self.audioRecorder.lastRecordingURL)
                 NSLog("[BlazingVoice3] Orchestrator done: %d chars, Q=%.0f%%",
-                      result.generatedText.count, result.qualityScore * 100)
+                      resultWithURL.generatedText.count, resultWithURL.qualityScore * 100)
 
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(result.generatedText, forType: .string)
+                NSPasteboard.general.setString(resultWithURL.generatedText, forType: .string)
 
-                sessionHistory.addSession(result)
+                sessionHistory.addSession(resultWithURL)
                 evolutionLog.log(
-                    result: result,
+                    result: resultWithURL,
                     promptUsed: PromptTemplate.systemPrompt(for: mode, customPrompt: customPrompt) ?? ""
                 )
 

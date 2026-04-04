@@ -16,6 +16,7 @@ final class EvolutionLog: ObservableObject {
         let qualityScore: Double
         var feedback: String?
         var feedbackDate: Date?
+        var recordingURL: URL?
 
         init(result: AgentOrchestrator.PipelineResult, promptUsed: String) {
             self.id = UUID()
@@ -28,6 +29,7 @@ final class EvolutionLog: ObservableObject {
             self.qualityScore = result.qualityScore
             self.feedback = nil
             self.feedbackDate = nil
+            self.recordingURL = result.recordingURL
         }
     }
 

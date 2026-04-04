@@ -21,6 +21,13 @@ actor AgentOrchestrator {
         let qualityNotes: [String]
         let mode: VoiceMode
         let processingTime: TimeInterval
+        var recordingURL: URL?
+
+        func withRecordingURL(_ url: URL?) -> PipelineResult {
+            var copy = self
+            copy.recordingURL = url
+            return copy
+        }
     }
 
     init(engine: any InferenceEngine, clusterEngine: ClusterEngine? = nil, dictionary: UserDictionary) {

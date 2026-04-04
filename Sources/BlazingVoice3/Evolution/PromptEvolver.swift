@@ -20,57 +20,41 @@ actor PromptEvolver {
         currentDictionaryCSV: String,
         currentPrompt: String
     ) async throws -> EvolutionResult {
-        let feedbackText = feedbackEntries.map { entry in
+        // Limit to most recent 3 entries to fit in context window (4096 tokens)
+        let recentEntries = Array(feedbackEntries.prefix(3))
+
+        let feedbackText = recentEntries.map { entry in
+            // Truncate each field to keep total prompt compact
+            let raw = String(entry.rawText.prefix(200))
+            let generated = String(entry.generatedText.prefix(300))
+            let fb = String((entry.feedback ?? "").prefix(300))
+            return """
+            [入力]: \(raw)
+            [AI出力]: \(generated)
+            [修正案]: \(fb)
             """
-            --- エントリ (モード: \(entry.mode)) ---
-            [音声認識テキスト]: \(entry.rawText)
-            [辞書補正後]: \(entry.correctedText)
-            [AI出力]: \(entry.generatedText)
-            [ユーザー修正案]: \(entry.feedback ?? "(なし)")
-            [品質スコア]: \(String(format: "%.0f%%", entry.qualityScore * 100))
-            """
-        }.joined(separator: "\n\n")
+        }.joined(separator: "\n---\n")
 
         let systemPrompt = """
-        あなたは医療記録AIシステムの自己改善エージェントです。
-        ユーザーから音声認識→AI変換パイプラインの実行結果とフィードバック（修正案）が提供されます。
-        これらを分析し、システムを改善するための具体的な提案をJSON形式で出力してください。
+        医療記録AIの自己改善エージェント。フィードバックを分析しJSON出力。
 
-        ## 分析の観点
-        1. **辞書追加**: 音声認識の誤認識パターンを特定し、辞書エントリ（from→to）を提案する
-           - 例: 音声認識が「ぶてな」→「布地」と誤認識しているが正しくは「ブテナフィン」
-        2. **プロンプト改善**: AI出力の品質問題を特定し、プロンプトの改善提案をする
-           - 例: 指導内容が省略されている → プロンプトに「〜を必ず記載」を追加
-        3. **要約**: 何を改善したかの日本語要約
+        分析観点:
+        1. 辞書追加: 音声認識の誤認識→正しい医学用語のペア
+        2. プロンプト改善: 出力品質の問題→追加ルール提案
+        3. 要約
 
-        ## 現在の辞書 (CSV形式、一部抜粋)
-        \(String(currentDictionaryCSV.prefix(2000)))
-
-        ## 現在のプロンプト (一部抜粋)
-        \(String(currentPrompt.prefix(1500)))
-
-        ## 出力形式 (厳密にこのJSON形式で出力)
-        ```json
-        {
-          "dictionary_additions": [
-            {"from": "誤認識テキスト", "to": "正しい医学用語"}
-          ],
-          "prompt_addition": "プロンプトに追加すべきルール（不要なら空文字）",
-          "summary": "改善内容の日本語要約"
-        }
-        ```
-
-        JSONのみを出力してください。前置き・説明は不要です。
+        出力形式(JSONのみ):
+        {"dictionary_additions":[{"from":"誤認識","to":"正表記"}],"prompt_addition":"追加ルール","summary":"要約"}
         """
 
         let messages = [
             ChatMessage(role: "system", content: systemPrompt),
-            ChatMessage(role: "user", content: "以下のフィードバックを分析して改善案を出力してください:\n\n\(feedbackText)")
+            ChatMessage(role: "user", content: feedbackText)
         ]
 
         let result = try await engine.generate(
             messages: messages,
-            maxTokens: 2048,
+            maxTokens: 512,
             temperature: 0.3,
             priority: .high
         )

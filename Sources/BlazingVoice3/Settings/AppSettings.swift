@@ -79,6 +79,14 @@ final class AppSettings: ObservableObject {
     @AppStorage("explicitPeers") var explicitPeers = ""
     @AppStorage("spilloverThreshold") var spilloverThreshold: Double = 0.8
 
+    // MARK: - Whisper
+    @AppStorage("whisperCLIPath") var whisperCLIPath = ""
+    @AppStorage("whisperModelPath") var whisperModelPath = ""
+
+    var isWhisperConfigured: Bool {
+        !whisperCLIPath.isEmpty && !whisperModelPath.isEmpty
+    }
+
     // MARK: - Prompts
     @AppStorage("globalPrefixPrompt") var globalPrefixPrompt = PromptTemplate.globalPrefix
     @AppStorage("soapPrefixPrompt") var soapPrefixPrompt = PromptTemplate.soapPrefix

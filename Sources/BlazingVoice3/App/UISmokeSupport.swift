@@ -48,6 +48,7 @@ final class TestPermissionManager: PermissionManaging {
 final class TestAudioRecorder: AudioRecording, @unchecked Sendable {
     var onAutoStop: ((Result<String, Error>) -> Void)?
     var onPartialResult: ((String) -> Void)?
+    var lastRecordingURL: URL?
 
     private(set) var startCount = 0
     private(set) var stopCount = 0

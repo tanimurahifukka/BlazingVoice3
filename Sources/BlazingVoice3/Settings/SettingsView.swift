@@ -159,6 +159,54 @@ struct AdvancedSettingsView: View {
                     .padding(4)
                 }
 
+                GroupBox("Whisper再評価") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("whisper-cli パス")
+                                .frame(width: 120, alignment: .leading)
+                            TextField("/usr/local/bin/whisper-cli", text: $settings.whisperCLIPath)
+                                .textFieldStyle(.roundedBorder)
+                            Button("選択...") {
+                                let panel = NSOpenPanel()
+                                panel.canChooseFiles = true
+                                panel.canChooseDirectories = false
+                                panel.allowsMultipleSelection = false
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    settings.whisperCLIPath = url.path
+                                }
+                            }
+                        }
+                        HStack {
+                            Text("モデルファイル")
+                                .frame(width: 120, alignment: .leading)
+                            TextField("ggml-large-v3.bin", text: $settings.whisperModelPath)
+                                .textFieldStyle(.roundedBorder)
+                            Button("選択...") {
+                                let panel = NSOpenPanel()
+                                panel.canChooseFiles = true
+                                panel.canChooseDirectories = false
+                                panel.allowsMultipleSelection = false
+                                panel.allowedContentTypes = [.data]
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    settings.whisperModelPath = url.path
+                                }
+                            }
+                        }
+                        Text("brew install whisper-cpp でインストール後、whisper-cli のパスと ggml モデルファイル (.bin) を指定してください。履歴・進化タブで録音を再評価できます。")
+                            .font(.caption).foregroundStyle(.secondary)
+
+                        if settings.isWhisperConfigured {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("設定済み")
+                            }
+                            .font(.caption)
+                        }
+                    }
+                    .padding(4)
+                }
+
                 GroupBox("クラスターモード") {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("クラスターモード有効", isOn: Binding(
