@@ -11,7 +11,7 @@ final class AppDelegateFlowTests: XCTestCase {
     private struct Harness {
         let appDelegate: AppDelegate
         let permissions: TestPermissionManager
-        let audioRecorder: TestAudioRecorder
+        let speechRecognizer: TestSpeechRecognizer
         let statusBar: TestStatusBarController
         let overlay: TestOverlayPresenter
         let hotkeys: TestHotkeyManager
@@ -35,16 +35,16 @@ final class AppDelegateFlowTests: XCTestCase {
         harness.appDelegate.menuStartRecording()
         try await waitUntil { harness.appDelegate.pipelineState == .recording }
 
-        XCTAssertEqual(harness.audioRecorder.startCount, 1)
+        XCTAssertEqual(harness.speechRecognizer.startCount, 1)
         XCTAssertEqual(harness.statusBar.latestState, .recording)
         XCTAssertTrue(menuTitles(harness.statusBar.latestMenu).contains("⏹ 停止"))
 
-        harness.audioRecorder.stopResult = .success("メニュー録音確認")
+        harness.speechRecognizer.stopResult = .success("メニュー録音確認")
         harness.appDelegate.menuStopRecording()
 
         try await waitUntil { self.isDone(harness.appDelegate.pipelineState) }
 
-        XCTAssertEqual(harness.audioRecorder.stopCount, 1)
+        XCTAssertEqual(harness.speechRecognizer.stopCount, 1)
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "メニュー録音確認")
         XCTAssertTrue(harness.overlay.messages.contains(where: { $0.contains("Cmd+V") }))
     }
@@ -57,7 +57,7 @@ final class AppDelegateFlowTests: XCTestCase {
         harness.appDelegate.menuStartRecording()
         try await waitUntil { harness.permissions.requestAccessibilityCount == 1 }
 
-        XCTAssertEqual(harness.audioRecorder.startCount, 0)
+        XCTAssertEqual(harness.speechRecognizer.startCount, 0)
         XCTAssertEqual(harness.appDelegate.pipelineState, .idle)
         XCTAssertTrue(harness.overlay.messages.contains("アクセシビリティを許可してください"))
     }
@@ -78,12 +78,12 @@ final class AppDelegateFlowTests: XCTestCase {
         harness.hotkeys.simulateDoubleTap()
         try await waitUntil { harness.appDelegate.pipelineState == .recording }
 
-        harness.audioRecorder.stopResult = .success("こんにちは")
+        harness.speechRecognizer.stopResult = .success("こんにちは")
         harness.hotkeys.simulateDoubleTap()
         try await waitUntil { self.isDone(harness.appDelegate.pipelineState) }
 
-        XCTAssertEqual(harness.audioRecorder.startCount, 1)
-        XCTAssertEqual(harness.audioRecorder.stopCount, 1)
+        XCTAssertEqual(harness.speechRecognizer.startCount, 1)
+        XCTAssertEqual(harness.speechRecognizer.stopCount, 1)
         let pastedTexts = await collector.snapshot()
         XCTAssertEqual(pastedTexts, ["こんにちは"])
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "こんにちは")
@@ -96,7 +96,7 @@ final class AppDelegateFlowTests: XCTestCase {
             speechGranted: true,
             accessibilityGranted: accessibilityGranted
         )
-        let audioRecorder = TestAudioRecorder()
+        let speechRecognizer = TestSpeechRecognizer()
         let statusBar = TestStatusBarController()
         let overlay = TestOverlayPresenter()
         let hotkeys = TestHotkeyManager()
@@ -106,7 +106,7 @@ final class AppDelegateFlowTests: XCTestCase {
             sessionHistory: SessionHistory(),
             evolutionLog: EvolutionLog(),
             permissions: permissions,
-            audioRecorder: audioRecorder,
+            speechRecognizer: speechRecognizer,
             statusBarControllerFactory: { statusBar },
             overlayFactory: { overlay },
             hotkeyManagerFactory: { hotkeys },
@@ -116,7 +116,7 @@ final class AppDelegateFlowTests: XCTestCase {
         return Harness(
             appDelegate: appDelegate,
             permissions: permissions,
-            audioRecorder: audioRecorder,
+            speechRecognizer: speechRecognizer,
             statusBar: statusBar,
             overlay: overlay,
             hotkeys: hotkeys

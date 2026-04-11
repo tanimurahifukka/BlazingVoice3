@@ -21,19 +21,6 @@ protocol PermissionManaging: AnyObject {
     func requestAccessibility()
 }
 
-protocol AudioRecording: AnyObject, Sendable {
-    var onAutoStop: ((Result<String, Error>) -> Void)? { get set }
-    var onPartialResult: ((String) -> Void)? { get set }
-    var lastRecordingURL: URL? { get }
-
-    func startRecording(maxDuration: TimeInterval) throws
-    func stopRecordingAndTranscribe() async throws -> String
-
-    /// Record audio only (no STT). Use for Whisper-based transcription.
-    func startRecordingOnly(maxDuration: TimeInterval) throws
-    func stopRecording() throws -> URL
-}
-
 @MainActor
 protocol StatusBarControlling: AnyObject {
     func setup()
@@ -52,8 +39,11 @@ extension OverlayPresenting {
     func show(message: String) {
         show(message: message, duration: 2.0)
     }
-    func showProgress(message: String, detail: String = "", progress: Double = -1) {
-        showProgress(message: message, detail: detail, progress: progress)
+    func showProgress(message: String) {
+        showProgress(message: message, detail: "", progress: -1)
+    }
+    func showProgress(message: String, detail: String) {
+        showProgress(message: message, detail: detail, progress: -1)
     }
 }
 

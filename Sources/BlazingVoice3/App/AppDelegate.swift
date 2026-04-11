@@ -15,7 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var statusBarController: (any StatusBarControlling)?
     private var overlay: (any OverlayPresenting)?
     private var hotkeyManager: (any HotkeyManaging)?
-    private let audioRecorder: any AudioRecording
+    private let primarySpeechRecognizer: any SpeechRecognizer
+    private var currentRecognizer: (any SpeechRecognizer)?
     private let statusBarControllerFactory: @MainActor () -> any StatusBarControlling
     private let overlayFactory: @MainActor () -> any OverlayPresenting
     private let hotkeyManagerFactory: @MainActor () -> any HotkeyManaging
@@ -42,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         sessionHistory = SessionHistory()
         evolutionLog = EvolutionLog()
         permissions = PermissionHelper()
-        audioRecorder = AudioRecorder()
+        primarySpeechRecognizer = AppleSpeechRecognizer()
         statusBarControllerFactory = { StatusBarController() }
         overlayFactory = { OverlayPanel() }
         hotkeyManagerFactory = { HotkeyManager() }
@@ -57,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         sessionHistory: SessionHistory,
         evolutionLog: EvolutionLog,
         permissions: any PermissionManaging,
-        audioRecorder: any AudioRecording,
+        speechRecognizer: any SpeechRecognizer,
         statusBarControllerFactory: @escaping @MainActor () -> any StatusBarControlling,
         overlayFactory: @escaping @MainActor () -> any OverlayPresenting,
         hotkeyManagerFactory: @escaping @MainActor () -> any HotkeyManaging,
@@ -69,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         self.sessionHistory = sessionHistory
         self.evolutionLog = evolutionLog
         self.permissions = permissions
-        self.audioRecorder = audioRecorder
+        self.primarySpeechRecognizer = speechRecognizer
         self.statusBarControllerFactory = statusBarControllerFactory
         self.overlayFactory = overlayFactory
         self.hotkeyManagerFactory = hotkeyManagerFactory
@@ -147,35 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
 
-        audioRecorder.onAutoStop = { [weak self] result in
+        primarySpeechRecognizer.onAutoStop = { [weak self] result in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                switch result {
-                case .success(let rawText):
-                    if rawText.isEmpty, let url = self.audioRecorder.lastRecordingURL {
-                        // Whisper record-only mode: auto-stop triggered, run Whisper
-                        self.pipelineState = .processing
-                        self.statusBarController?.updateState(.processing)
-                        self.overlay?.showProgress(message: "Whisper 文字起こし処理中")
-                        let evaluator = WhisperEvaluator(
-                            whisperCLIPath: self.settings.whisperCLIPath,
-                            modelPath: self.settings.whisperModelPath
-                        )
-                        do {
-                            let whisperResult = try await evaluator.evaluate(recordingURL: url)
-                            let text = whisperResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !text.isEmpty {
-                                self.processTranscription(text)
-                            }
-                        } catch {
-                            self.handlePipelineFailure(error)
-                        }
-                    } else {
-                        self.processTranscription(rawText)
-                    }
-                case .failure(let error):
-                    self.handlePipelineFailure(error)
-                }
+                self?.handleAutoStopResult(result)
             }
         }
 
@@ -490,13 +465,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
+        let recognizer = recognizerForCurrentMode()
         do {
             NSLog("[BlazingVoice3] Starting audio recording (whisper=%d)", useWhisper ? 1 : 0)
-            if useWhisper {
-                try audioRecorder.startRecordingOnly(maxDuration: settings.maxRecordingDuration)
-            } else {
-                try audioRecorder.startRecording(maxDuration: settings.maxRecordingDuration)
-            }
+            try recognizer.start(maxDuration: settings.maxRecordingDuration)
+            currentRecognizer = recognizer
             pipelineState = .recording
             statusBarController?.updateState(.recording)
             let engineLabel = useWhisper ? "Whisper" : "Apple STT"
@@ -504,6 +477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             updateStatusMenu()
             NSLog("[BlazingVoice3] Recording started OK")
         } catch {
+            currentRecognizer = nil
             pipelineState = .idle
             statusBarController?.updateState(.error)
             overlay?.show(message: "録音エラー: \(error.localizedDescription)")
@@ -514,59 +488,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func stopRecordingAndProcess() {
         NSLog("[BlazingVoice3] stopRecordingAndProcess (whisper=%d)", useWhisper ? 1 : 0)
+        guard let recognizer = currentRecognizer else {
+            NSLog("[BlazingVoice3] stopRecordingAndProcess called without active recognizer")
+            return
+        }
         pipelineState = .processing
         statusBarController?.updateState(.processing)
         updateStatusMenu()
 
-        if useWhisper {
-            overlay?.showProgress(message: "Whisper 文字起こし処理中")
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    let recordingURL = try self.audioRecorder.stopRecording()
-                    NSLog("[BlazingVoice3] Recording saved, starting Whisper: %@", recordingURL.lastPathComponent)
+        let message = useWhisper ? "Whisper 文字起こし処理中" : "音声を文字起こし中..."
+        overlay?.showProgress(message: message)
 
-                    let evaluator = WhisperEvaluator(
-                        whisperCLIPath: self.settings.whisperCLIPath,
-                        modelPath: self.settings.whisperModelPath
-                    )
-                    let result = try await evaluator.evaluate(recordingURL: recordingURL)
-                    let rawText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    NSLog("[BlazingVoice3] Whisper STT complete: %d chars (%.1fs)", rawText.count, result.processingTime)
-
-                    guard !rawText.isEmpty else {
-                        self.pipelineState = .idle
-                        self.statusBarController?.updateState(.idle)
-                        self.overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
-                        self.updateStatusMenu()
-                        return
-                    }
-
-                    self.processTranscription(rawText)
-                } catch {
-                    NSLog("[BlazingVoice3] Whisper STT failed: %@", "\(error)")
-                    self.handlePipelineFailure(error)
-                }
-            }
-        } else {
-            overlay?.showProgress(message: "音声を文字起こし中...")
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    let rawText = try await audioRecorder.stopRecordingAndTranscribe()
-                    NSLog("[BlazingVoice3] STT complete: %d chars", rawText.count)
-                    self.processTranscription(rawText)
-                } catch BlazingError.noSpeechResult {
-                    NSLog("[BlazingVoice3] No speech detected, returning to idle")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let rawText = try await recognizer.finish()
+                self.currentRecognizer = nil
+                NSLog("[BlazingVoice3] STT complete: %d chars", rawText.count)
+                if rawText.isEmpty {
                     self.pipelineState = .idle
                     self.statusBarController?.updateState(.idle)
                     self.overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
                     self.updateStatusMenu()
-                } catch {
-                    NSLog("[BlazingVoice3] STT failed: %@", "\(error)")
-                    self.handlePipelineFailure(error)
+                    return
                 }
+                self.processTranscription(rawText)
+            } catch BlazingError.noSpeechResult {
+                self.currentRecognizer = nil
+                NSLog("[BlazingVoice3] No speech detected, returning to idle")
+                self.pipelineState = .idle
+                self.statusBarController?.updateState(.idle)
+                self.overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
+                self.updateStatusMenu()
+            } catch {
+                self.currentRecognizer = nil
+                NSLog("[BlazingVoice3] STT failed: %@", "\(error)")
+                self.handlePipelineFailure(error)
             }
+        }
+    }
+
+    /// Pick the speech recognizer appropriate for the current mode.
+    /// Realtime (normal) mode always uses Apple; other modes prefer Whisper
+    /// when it is configured.
+    private func recognizerForCurrentMode() -> any SpeechRecognizer {
+        guard useWhisper else { return primarySpeechRecognizer }
+        let r = WhisperCLIRecognizer(
+            cliPath: settings.whisperCLIPath,
+            modelPath: settings.whisperModelPath
+        )
+        r.onAutoStop = { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.handleAutoStopResult(result)
+            }
+        }
+        return r
+    }
+
+    @MainActor
+    private func handleAutoStopResult(_ result: Result<String, Error>) {
+        currentRecognizer = nil
+        switch result {
+        case .success(let text):
+            if text.isEmpty {
+                pipelineState = .idle
+                statusBarController?.updateState(.idle)
+                overlay?.show(message: "音声が検出されませんでした", duration: 1.5)
+                updateStatusMenu()
+            } else {
+                processTranscription(text)
+            }
+        case .failure(let error):
+            handlePipelineFailure(error)
         }
     }
 
@@ -610,7 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     mode: mode,
                     customPrompt: customPrompt
                 )
-                let resultWithURL = result.withRecordingURL(self.audioRecorder.lastRecordingURL)
+                let resultWithURL = result.withRecordingURL(self.primarySpeechRecognizer.lastRecordingURL)
                 NSLog("[BlazingVoice3] Orchestrator done: %d chars, Q=%.0f%%",
                       resultWithURL.generatedText.count, resultWithURL.qualityScore * 100)
 
@@ -709,7 +702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // On each partial STT result: detect breath pause
         // NOTE: onPartialResult is called from SFSpeechRecognizer's background thread,
         // so we dispatch everything to MainActor
-        audioRecorder.onPartialResult = { [weak self] rawText in
+        primarySpeechRecognizer.onPartialResult = { [weak self] rawText in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let cleaned = FillerRemover.clean(rawText)
@@ -728,13 +721,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         do {
-            try audioRecorder.startRecording(maxDuration: settings.maxRecordingDuration)
+            try primarySpeechRecognizer.start(maxDuration: settings.maxRecordingDuration)
+            currentRecognizer = primarySpeechRecognizer
             pipelineState = .recording
             statusBarController?.updateState(.recording)
             overlay?.show(message: "リアルタイム入力中 ⌥N で停止", duration: 3)
             updateStatusMenu()
             NSLog("[BlazingVoice3] Realtime chunked recording started")
         } catch {
+            currentRecognizer = nil
             pipelineState = .idle
             statusBarController?.updateState(.error)
             overlay?.show(message: "録音エラー")
@@ -807,17 +802,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSLog("[BlazingVoice3] Stopping realtime")
         chunkTimer?.invalidate()
         chunkTimer = nil
-        audioRecorder.onPartialResult = nil
+        primarySpeechRecognizer.onPartialResult = nil
 
         pipelineState = .processing
         statusBarController?.updateState(.processing)
         updateStatusMenu()
 
+        let recognizer = currentRecognizer ?? primarySpeechRecognizer
+        currentRecognizer = nil
+
         Task { [weak self] in
             guard let self else { return }
             let finalTranscript: String
             do {
-                finalTranscript = try await self.audioRecorder.stopRecordingAndTranscribe()
+                finalTranscript = try await recognizer.finish()
             } catch BlazingError.noSpeechResult {
                 finalTranscript = self.lastPartialText
             } catch {

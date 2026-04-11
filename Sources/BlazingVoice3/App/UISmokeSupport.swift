@@ -45,7 +45,9 @@ final class TestPermissionManager: PermissionManaging {
     }
 }
 
-final class TestAudioRecorder: AudioRecording, @unchecked Sendable {
+final class TestSpeechRecognizer: SpeechRecognizer, @unchecked Sendable {
+    let isRealtime = true
+
     var onAutoStop: ((Result<String, Error>) -> Void)?
     var onPartialResult: ((String) -> Void)?
     var lastRecordingURL: URL?
@@ -55,26 +57,16 @@ final class TestAudioRecorder: AudioRecording, @unchecked Sendable {
     var startError: Error?
     var stopResult: Result<String, Error> = .success("テスト入力")
 
-    func startRecording(maxDuration: TimeInterval) throws {
+    func start(maxDuration: TimeInterval) throws {
         startCount += 1
         if let startError {
             throw startError
         }
     }
 
-    func stopRecordingAndTranscribe() async throws -> String {
+    func finish() async throws -> String {
         stopCount += 1
         return try stopResult.get()
-    }
-
-    func startRecordingOnly(maxDuration: TimeInterval) throws {
-        startCount += 1
-        if let startError { throw startError }
-    }
-
-    func stopRecording() throws -> URL {
-        stopCount += 1
-        return lastRecordingURL ?? URL(fileURLWithPath: "/tmp/test.caf")
     }
 
     func emitPartial(_ text: String) {
@@ -106,6 +98,10 @@ final class TestOverlayPresenter: OverlayPresenting {
     private(set) var messages: [String] = []
 
     func show(message: String, duration: TimeInterval) {
+        messages.append(message)
+    }
+
+    func showProgress(message: String, detail: String, progress: Double) {
         messages.append(message)
     }
 
@@ -190,7 +186,7 @@ enum UISmokeHarness {
 
         let previousClipboard = NSPasteboard.general.string(forType: .string)
         let permissions = TestPermissionManager()
-        let audioRecorder = TestAudioRecorder()
+        let speechRecognizer = TestSpeechRecognizer()
         let statusBar = TestStatusBarController()
         let overlay = TestOverlayPresenter()
         let hotkeys = TestHotkeyManager()
@@ -200,7 +196,7 @@ enum UISmokeHarness {
             sessionHistory: SessionHistory(),
             evolutionLog: EvolutionLog(),
             permissions: permissions,
-            audioRecorder: audioRecorder,
+            speechRecognizer: speechRecognizer,
             statusBarControllerFactory: { statusBar },
             overlayFactory: { overlay },
             hotkeyManagerFactory: { hotkeys },
@@ -218,14 +214,14 @@ enum UISmokeHarness {
             appDelegate.currentMode = .dictation
             hotkeys.simulateDoubleTap()
             try await waitUntil { appDelegate.pipelineState == .recording }
-            guard audioRecorder.startCount == 1 else {
+            guard speechRecognizer.startCount == 1 else {
                 throw HarnessError.failed("Dictation start was not triggered by hotkey")
             }
             guard menuTitles(statusBar.latestMenu).contains("⏹ 停止") else {
                 throw HarnessError.failed("Status menu did not switch to the stop item")
             }
 
-            audioRecorder.stopResult = .success("口述モード確認")
+            speechRecognizer.stopResult = .success("口述モード確認")
             hotkeys.simulateDoubleTap()
             try await waitUntil {
                 if case .done = appDelegate.pipelineState {
@@ -243,7 +239,7 @@ enum UISmokeHarness {
             try await waitUntil(timeoutSeconds: 0.5) {
                 permissions.requestAccessibilityCount == 1
             }
-            guard audioRecorder.startCount == 1 else {
+            guard speechRecognizer.startCount == 1 else {
                 throw HarnessError.failed("Realtime mode should not start without accessibility permission")
             }
 
@@ -253,7 +249,7 @@ enum UISmokeHarness {
             }
 
             permissions.accessibilityGranted = true
-            audioRecorder.stopResult = .success("こんにちは")
+            speechRecognizer.stopResult = .success("こんにちは")
             appDelegate.menuStartRecording()
             try await waitUntil { appDelegate.pipelineState == .recording }
 

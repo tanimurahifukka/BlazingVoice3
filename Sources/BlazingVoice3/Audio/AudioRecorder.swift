@@ -242,4 +242,3 @@ final class AudioRecorder: @unchecked Sendable {
     }
 }
 
-extension AudioRecorder: AudioRecording {}
