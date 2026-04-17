@@ -35,9 +35,13 @@ final class WhisperEvaluator: Sendable {
             .appendingPathComponent(UUID().uuidString + ".wav")
 
         let sourceFile = try AVAudioFile(forReading: inputURL)
-        let sourceFormat = sourceFile.processingFormat
 
-        let targetSettings: [String: Any] = [
+        guard sourceFile.length > 0 else {
+            throw WhisperError.conversionFailed("Recording file is empty")
+        }
+
+        // On-disk format: 16 kHz, mono, Int16 (what whisper-cli expects).
+        let fileSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16000.0,
             AVNumberOfChannelsKey: 1,
@@ -45,21 +49,28 @@ final class WhisperEvaluator: Sendable {
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsBigEndianKey: false,
         ]
-        let targetFormat = AVAudioFormat(settings: targetSettings)!
+        let outputFile = try AVAudioFile(forWriting: outputURL, settings: fileSettings)
 
-        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+        // Use AVAudioFile's processingFormat (Float32) for the converter
+        // output buffer. AVAudioFile.write() then handles Float32 → Int16
+        // internally, avoiding the CAAssertRtn that fires when writing an
+        // Int16 buffer directly via ExtAudioFileWrite.
+        let sourceFormat = sourceFile.processingFormat
+        let outputProcessingFormat = outputFile.processingFormat
+
+        guard let converter = AVAudioConverter(from: sourceFormat, to: outputProcessingFormat) else {
             throw WhisperError.conversionFailed("Cannot create audio converter")
         }
 
-        let outputFile = try AVAudioFile(forWriting: outputURL, settings: targetSettings)
-
         let bufferCapacity: AVAudioFrameCount = 4096
-        guard let convertBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: bufferCapacity) else {
+        guard let convertBuffer = AVAudioPCMBuffer(pcmFormat: outputProcessingFormat, frameCapacity: bufferCapacity) else {
             throw WhisperError.conversionFailed("Cannot create PCM buffer")
         }
 
         var isDone = false
         while !isDone {
+            convertBuffer.frameLength = 0
+
             let status = try converter.convert(to: convertBuffer, error: nil) { _, outStatus in
                 guard let readBuffer = AVAudioPCMBuffer(
                     pcmFormat: sourceFormat,
@@ -84,7 +95,9 @@ final class WhisperEvaluator: Sendable {
 
             switch status {
             case .haveData:
-                try outputFile.write(from: convertBuffer)
+                if convertBuffer.frameLength > 0 {
+                    try outputFile.write(from: convertBuffer)
+                }
             case .endOfStream, .inputRanDry:
                 isDone = true
             case .error:

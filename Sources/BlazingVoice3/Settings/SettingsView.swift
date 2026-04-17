@@ -67,6 +67,7 @@ struct ModelSettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var modelManager: ModelManager
     @State private var modelChanged = false
+    @State private var showHuggingFaceSearch = false
 
     var body: some View {
         Form {
@@ -76,6 +77,16 @@ struct ModelSettingsView: View {
                 modelPicker("会話 (箇条書き)", binding: $settings.conversationModelId)
                 modelPicker("クラスター", binding: $settings.clusterModelId)
                 Text("空欄 = 口述モデルを共用。通常モードは軽量モデル推奨。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("モデル追加") {
+                Button {
+                    showHuggingFaceSearch = true
+                } label: {
+                    Label("HuggingFace から追加", systemImage: "magnifyingglass")
+                }
+                Text("GGUF モデルをキーワード検索して登録。追加後は上のピッカーから選択可能。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -101,6 +112,11 @@ struct ModelSettingsView: View {
         .onChange(of: settings.normalModelId) { modelChanged = true }
         .onChange(of: settings.conversationModelId) { modelChanged = true }
         .onChange(of: settings.clusterModelId) { modelChanged = true }
+        .sheet(isPresented: $showHuggingFaceSearch) {
+            HuggingFaceSearchView(kind: .llamaGGUF)
+                .environmentObject(modelManager)
+                .environmentObject(settings)
+        }
     }
 
     private func modelPicker(_ label: String, binding: Binding<String>) -> some View {
@@ -122,7 +138,10 @@ struct ModelSettingsView: View {
 
 struct AdvancedSettingsView: View {
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var modelManager: ModelManager
     @State private var showClusterAlert = false
+    @State private var showWhisperSearch = false
+    @State private var whisperDetectMessage: String?
 
     var body: some View {
         ScrollView {
@@ -164,8 +183,16 @@ struct AdvancedSettingsView: View {
                         HStack {
                             Text("whisper-cli パス")
                                 .frame(width: 120, alignment: .leading)
-                            TextField("/usr/local/bin/whisper-cli", text: $settings.whisperCLIPath)
+                            TextField("/opt/homebrew/bin/whisper-cli", text: $settings.whisperCLIPath)
                                 .textFieldStyle(.roundedBorder)
+                            Button("自動検出") {
+                                if let detected = WhisperPathFinder.detect() {
+                                    settings.whisperCLIPath = detected
+                                    whisperDetectMessage = "検出: \(detected)"
+                                } else {
+                                    whisperDetectMessage = "見つかりません。brew install whisper-cpp を試してください。"
+                                }
+                            }
                             Button("選択...") {
                                 let panel = NSOpenPanel()
                                 panel.canChooseFiles = true
@@ -175,6 +202,32 @@ struct AdvancedSettingsView: View {
                                     settings.whisperCLIPath = url.path
                                 }
                             }
+                        }
+                        if let whisperDetectMessage {
+                            Text(whisperDetectMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if settings.whisperCLIPath.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "terminal")
+                                    .foregroundStyle(.secondary)
+                                Text(WhisperPathFinder.installCommand)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(WhisperPathFinder.installCommand, forType: .string)
+                                    whisperDetectMessage = "コマンドをクリップボードにコピーしました"
+                                } label: {
+                                    Image(systemName: "doc.on.clipboard")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("インストールコマンドをコピー")
+                            }
+                            .padding(6)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(6)
                         }
                         HStack {
                             Text("モデルファイル")
@@ -192,7 +245,13 @@ struct AdvancedSettingsView: View {
                                 }
                             }
                         }
-                        Text("brew install whisper-cpp でインストール後、whisper-cli パスと ggml モデルファイル (.bin) の指定が必要。履歴・進化タブで録音の再評価が可能。")
+                        Button {
+                            showWhisperSearch = true
+                        } label: {
+                            Label("HuggingFace から Whisper モデルを取得", systemImage: "magnifyingglass")
+                        }
+
+                        Text("brew install whisper-cpp でインストール後、whisper-cli パスを指定。モデルファイル (.bin) は HuggingFace から自動取得可能 (ggerganov/whisper.cpp 推奨)。")
                             .font(.caption).foregroundStyle(.secondary)
 
                         if settings.isWhisperConfigured {
@@ -238,6 +297,11 @@ struct AdvancedSettingsView: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("クラスターモードは複数のMacをLAN接続して推論を分散する機能です。通常使用では不要です。設定にはネットワークの知識が必要です。有効にしますか？")
+        }
+        .sheet(isPresented: $showWhisperSearch) {
+            HuggingFaceSearchView(kind: .whisperBin)
+                .environmentObject(modelManager)
+                .environmentObject(settings)
         }
     }
 }

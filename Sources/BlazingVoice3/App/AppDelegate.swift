@@ -112,6 +112,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         currentMode = settings.defaultVoiceMode
         NSApplication.shared.setActivationPolicy(.accessory)
 
+        // Auto-fill whisper-cli path if user hasn't set one yet.
+        if settings.whisperCLIPath.isEmpty, let detected = WhisperPathFinder.detect() {
+            settings.whisperCLIPath = detected
+            NSLog("[BlazingVoice3] Auto-detected whisper-cli: %@", detected)
+        }
+
         // UI setup
         let sbc = statusBarControllerFactory()
         sbc.setup()

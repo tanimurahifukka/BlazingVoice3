@@ -112,9 +112,45 @@ final class ModelManager: ObservableObject {
         ),
     ]
 
+    private static let userAddedModelsKey = "userAddedModels"
+
     init() {
         self.availableModels = Self.defaultModels
         scanLocalModels()
+    }
+
+    /// Persist a user-supplied model (e.g. from the HuggingFace search UI)
+    /// and refresh the availableModels list.
+    func addUserAddedModel(_ model: ModelInfo) {
+        var current = Self.loadUserAddedModels()
+        if !current.contains(where: { $0.id == model.id }) {
+            current.append(model)
+            Self.saveUserAddedModels(current)
+        }
+        scanLocalModels()
+    }
+
+    /// Remove a previously added model from the persisted list.
+    /// Has no effect on built-in models.
+    func removeUserAddedModel(id: String) {
+        var current = Self.loadUserAddedModels()
+        current.removeAll { $0.id == id }
+        Self.saveUserAddedModels(current)
+        scanLocalModels()
+    }
+
+    static func loadUserAddedModels() -> [ModelInfo] {
+        guard let data = UserDefaults.standard.data(forKey: userAddedModelsKey),
+              let decoded = try? JSONDecoder().decode([ModelInfo].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private static func saveUserAddedModels(_ models: [ModelInfo]) {
+        if let data = try? JSONEncoder().encode(models) {
+            UserDefaults.standard.set(data, forKey: userAddedModelsKey)
+        }
     }
 
     /// Create an inference engine for the selected model.
@@ -213,6 +249,62 @@ final class ModelManager: ObservableObject {
         scanLocalModels()
     }
 
+    /// Download an arbitrary Whisper.cpp model file from a HuggingFace repo
+    /// to `~/models/whisper/`. Returns the absolute destination path.
+    /// Reuses the same progress plumbing as downloadModel().
+    func downloadWhisperModel(repoId: String, fileName: String) async throws -> URL {
+        isDownloading = true
+        downloadStatus = "\(fileName) ダウンロード中..."
+        downloadProgress = 0
+        defer { isDownloading = false }
+
+        let whisperDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("models/whisper")
+        try FileManager.default.createDirectory(at: whisperDir, withIntermediateDirectories: true)
+
+        let destPath = whisperDir.appendingPathComponent(fileName)
+        if FileManager.default.fileExists(atPath: destPath.path) {
+            downloadProgress = 1.0
+            downloadStatus = "既にダウンロード済: \(fileName)"
+            return destPath
+        }
+
+        let urlString = "https://huggingface.co/\(repoId)/resolve/main/\(fileName)"
+        guard let url = URL(string: urlString) else {
+            throw BlazingError.downloadFailed("Invalid URL: \(urlString)")
+        }
+
+        NSLog("[BlazingVoice3] Downloading whisper model %@ from %@", fileName, urlString)
+
+        let delegate = DownloadProgressDelegate { [weak self] progress, downloaded, total in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.downloadProgress = progress
+                self.downloadStatus = String(
+                    format: "%@ ダウンロード中... %@/%@",
+                    fileName,
+                    Self.formatBytes(downloaded),
+                    total > 0 ? Self.formatBytes(total) : "?"
+                )
+                self.onDownloadProgress?(progress, downloaded, total)
+            }
+        }
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+
+        let (tempURL, response) = try await session.download(from: url)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw BlazingError.downloadFailed("HTTP \(statusCode): \(urlString)")
+        }
+        try FileManager.default.moveItem(at: tempURL, to: destPath)
+
+        downloadProgress = 1.0
+        downloadStatus = "ダウンロード完了: \(fileName)"
+        NSLog("[BlazingVoice3] Whisper download complete: %@", destPath.path)
+        return destPath
+    }
+
     static func formatBytes(_ bytes: Int64) -> String {
         let gb = Double(bytes) / 1_073_741_824
         if gb >= 1.0 {
@@ -224,7 +316,7 @@ final class ModelManager: ObservableObject {
 
     /// Scan local storage for available GGUF models
     func scanLocalModels() {
-        var found = Self.defaultModels
+        var found = Self.defaultModels + Self.loadUserAddedModels()
 
         let searchDirs = [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("models"),
